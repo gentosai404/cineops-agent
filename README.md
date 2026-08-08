@@ -1,36 +1,63 @@
 # CineOps Agent
 
-Gemini-powered incident investigation agent for media-production pipelines.
-Built for the Grafana track of the Agentic Cinema hackathon.
+Production incident investigation for media pipelines. Built for the Grafana
+track of Agentic Cinema: The Blockbuster Hackathon.
 
-## Concept
+![CineOps Agent incident room](docs/cineops-agent-demo.png)
 
-CineOps investigates failures across upload, transcoding, subtitle, rendering,
-and publishing stages. It uses Google Cloud/Gemini for reasoning and the
-Grafana Cloud MCP server for live metrics, logs, traces, alerts, and dashboard
-links.
+## What works now
 
-## Status
+- Interactive incident room for upload, ingest, transcode, subtitles, quality
+  control, and publishing stages.
+- Deterministic local investigator that ranks metrics and logs, identifies a
+  root cause, and produces a recovery decision.
+- Read-only Grafana MCP tool trace for `query_prometheus`, `query_loki_logs`,
+  and `search_dashboards`.
+- Responsive, accessible, zero-dependency UI.
+- Node test suite covering evidence ranking, pipeline summaries, validation,
+  and operator queries.
 
-Setup phase. Runtime agent and telemetry simulator are not implemented yet.
+Public demo currently replays a deterministic incident fixture so it works
+without credentials or cloud billing. Gemini reasoning, Google ADK, live
+Grafana telemetry, and Cloud Run deployment remain the next runtime milestone.
+Interface labels replayed data explicitly; it does not present fixture data as
+a live external tool call.
+
+## Run locally
+
+```bash
+npm test
+npm start
+```
+
+Open <http://127.0.0.1:8000>.
+
+## Architecture
+
+```text
+Browser incident room
+  └─ deterministic local investigator
+       ├─ pipeline state
+       ├─ ranked evidence
+       ├─ recovery decision
+       └─ Grafana MCP tool trace (replay)
+
+Planned runtime:
+Browser → Google ADK/Gemini on Cloud Run → Grafana Cloud MCP (read-only)
+```
 
 ## Grafana MCP
 
-Antigravity workspace configuration lives at:
+Antigravity config lives at `.agents/mcp_config.json`. First connection needs
+Grafana OAuth authorization. No Grafana credential is stored in this repo.
 
-```text
-.agents/mcp_config.json
-```
+A real read-only connectivity test already completed in Antigravity using the
+Grafana tools `list_datasources` and `search_dashboards`. Production runtime
+integration will reuse the same OAuth-based Cloud MCP path.
 
-The first connection requires OAuth authorization in Antigravity. No Grafana
-credential is stored in this repository.
+## Project
 
-Configured stack:
-
-```text
-https://breezycurlew2764.grafana.net
-```
-
-## License
-
-MIT. See `LICENSE`.
+- Live local-replay demo: <https://wenn-id.github.io/cineops-agent/>
+- Repository: <https://github.com/wenn-id/cineops-agent>
+- Google Cloud project: `cineops-agentic-cinema-2026`
+- License: MIT
