@@ -13,7 +13,7 @@ test('investigates transcode failure with ranked Grafana evidence', () => {
   assert.equal(result.severity, 'critical');
   assert.equal(result.status, 'root_cause_identified');
   assert.equal(result.rootCause.stage, 'transcode');
-  assert.match(result.rootCause.finding, /GPU worker pool saturation/i);
+  assert.match(result.rootCause.finding, /Queue is 7\.8× baseline/i);
   assert.ok(result.confidence >= 0.9);
   assert.deepEqual(
     result.evidence.map((item) => item.id),

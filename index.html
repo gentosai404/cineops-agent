@@ -35,7 +35,7 @@
         <p>CineOps correlates production signals through Grafana MCP, then turns failure evidence into a recovery decision.</p>
         <dl>
           <div><dt>Premiere</dt><dd>21:00 UTC</dd></div>
-          <div><dt>Time remaining</dt><dd id="countdown">00:48:00</dd></div>
+          <div><dt>Replay remaining</dt><dd id="countdown">00:36:00</dd></div>
           <div><dt>Mode</dt><dd>Local replay</dd></div>
         </dl>
       </div>
@@ -60,7 +60,7 @@
 
         <form id="investigation-form" class="prompt-box">
           <label for="operator-query">Ask CineOps</label>
-          <select id="operator-query" class="operator-query" style="width:100%; background:transparent; color:var(--paper); border:none; outline:none; padding:14px 18px; font: 400 clamp(1.05rem, 1.6vw, 1.4rem)/1.45 Georgia, serif;"><option>Can we still make the 21:00 premiere? Find the root cause and safest recovery path.</option></select>
+          <textarea id="operator-query" rows="3" maxlength="220">Can we still make the 21:00 premiere? Find the root cause and safest recovery path.</textarea>
           <div>
             <span>Grafana MCP · read-only</span>
             <button id="run-button" type="submit">Run investigation <b aria-hidden="true">↗</b></button>

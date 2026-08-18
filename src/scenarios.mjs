@@ -4,6 +4,7 @@ export const scenarios = {
     title: 'Premiere delivery blocked',
     production: 'Neon Harbor — Episode 06',
     startedAt: '20:12 UTC',
+    replayAt: '20:24 UTC',
     deadline: '21:00 UTC',
     stages: [
       { id: 'upload', label: 'Upload', status: 'healthy', detail: 'Master received · 412\u00a0GB' },

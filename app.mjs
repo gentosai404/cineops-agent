@@ -87,9 +87,9 @@ function parseTime(timeStr) {
 }
 
 function startCountdown() {
-  const startSec = parseTime(scenario.startedAt);
-  const endSec = parseTime(scenario.deadline);
-  let seconds = endSec - startSec;
+  const replaySec = parseTime(scenario.replayAt);
+  const deadlineSec = parseTime(scenario.deadline);
+  let seconds = deadlineSec - replaySec;
   if (seconds < 0) seconds += 24 * 3600;
   const interval = window.setInterval(() => {
     seconds = Math.max(0, seconds - 1);
