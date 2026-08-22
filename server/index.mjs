@@ -107,6 +107,21 @@ async function handleInvestigate(req, res) {
   res.end();
 }
 
+export function simulatorAvailable() {
+  return Boolean(process.env.SIMULATOR_URL);
+}
+
+async function callSimulator(path, init) {
+  const base = (process.env.SIMULATOR_URL ?? '').replace(/\/+$/, '');
+  const response = await fetch(`${base}${path}`, {
+    ...init,
+    headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!response.ok) throw new Error(`simulator responded ${response.status}`);
+  return response.json();
+}
+
 export function startServer({ port = Number(process.env.PORT) || 8000, host = process.env.HOST || '127.0.0.1' } = {}) {
   const server = createServer(async (req, res) => {
     try {
@@ -116,6 +131,7 @@ export function startServer({ port = Number(process.env.PORT) || 8000, host = pr
           ok: true,
           engine: geminiAvailable() ? 'gemini' : 'deterministic',
           mcp: mcpAvailable(),
+          simulator: simulatorAvailable(),
           replayAvailable: true,
         });
         return;
@@ -160,6 +176,65 @@ export function startServer({ port = Number(process.env.PORT) || 8000, host = pr
           sendJson(res, 200, answer);
         } catch (error) {
           sendJson(res, error.statusCode ?? 502, { error: `follow-up failed: ${error.message}` });
+        }
+        return;
+      }
+      if (req.method === 'POST' && url.pathname === '/api/recovery') {
+        let payload;
+        try {
+          payload = await readJsonBody(req);
+        } catch {
+          sendJson(res, 400, { error: 'invalid JSON body' });
+          return;
+        }
+        // Browser-originated approvals must come from this service (basic
+        // CSRF guard); operator authentication is documented as out of scope
+        // for the single-user demo deployment.
+        const origin = req.headers.origin;
+        if (origin) {
+          try {
+            if (new URL(origin).host !== req.headers.host) {
+              sendJson(res, 403, { error: 'cross-origin recovery requests are rejected' });
+              return;
+            }
+          } catch {
+            sendJson(res, 403, { error: 'invalid origin header' });
+            return;
+          }
+        }
+        if (payload?.approved !== true) {
+          sendJson(res, 400, { error: 'recovery requires explicit approval' });
+          return;
+        }
+        // The approval must reference the investigation whose plan is being
+        // approved, so an anonymous flag flip alone cannot act.
+        const stored = typeof payload?.investigationRef === 'string' ? investigations.get(payload.investigationRef) : undefined;
+        if (!stored) {
+          sendJson(res, 404, { error: 'unknown investigation — approval must reference the investigation being approved' });
+          return;
+        }
+        if (!simulatorAvailable()) {
+          sendJson(res, 503, { error: 'recovery drill requires the telemetry simulator (set SIMULATOR_URL)' });
+          return;
+        }
+        try {
+          const outcome = await callSimulator('/recover', { method: 'POST' });
+          sendJson(res, 200, { acknowledged: true, ...outcome });
+        } catch (error) {
+          sendJson(res, 502, { error: `recovery failed: ${error.message}` });
+        }
+        return;
+      }
+      if (req.method === 'GET' && url.pathname === '/api/incident-state') {
+        if (!simulatorAvailable()) {
+          sendJson(res, 503, { error: 'incident state requires the telemetry simulator (set SIMULATOR_URL)' });
+          return;
+        }
+        try {
+          const state = await callSimulator('/state');
+          sendJson(res, 200, state);
+        } catch (error) {
+          sendJson(res, 502, { error: `incident state failed: ${error.message}` });
         }
         return;
       }
