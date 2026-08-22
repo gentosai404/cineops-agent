@@ -11,6 +11,7 @@ import { createMcpClient, mcpAvailable } from './grafana-mcp.mjs';
 import { answerFollowUp } from './followup.mjs';
 import { createRateLimiter, parseLimit } from './ratelimit.mjs';
 import { logEvent } from './log.mjs';
+import { formatServiceMetrics, increment as incrementMetric } from './metrics.mjs';
 import { resolveStatic } from './static.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -88,10 +89,12 @@ async function handleInvestigate(req, res, { consumeAllowance } = {}) {
 
   const requestId = randomUUID();
   const startedAt = Date.now();
+  const engineName = geminiAvailable() ? 'gemini' : 'deterministic';
+  incrementMetric('cineops_investigations_total', { engine: engineName });
   logEvent('info', 'investigate.start', {
     requestId,
     scenarioId: scenarioKey,
-    engine: geminiAvailable() ? 'gemini' : 'deterministic',
+    engine: engineName,
     mcp: mcpAvailable(),
   });
 
@@ -103,25 +106,32 @@ async function handleInvestigate(req, res, { consumeAllowance } = {}) {
   });
   const abort = new AbortController();
   res.on('close', () => abort.abort());
+  let actualEngine = engineName;
   // Live Grafana telemetry needs the live engine: without a Gemini key the
   // deterministic engine runs on fixture data and MCP is not dialed at all.
   const mcp = geminiAvailable() && mcpAvailable() ? createMcpClient({ signal: abort.signal }) : undefined;
   try {
     for await (const message of investigateStream(scenario, query, { signal: abort.signal, mcp })) {
       if (abort.signal.aborted || res.destroyed) break;
+      if (message.event === 'status' && message.data?.phase === 'fallback') actualEngine = 'deterministic';
       if (message.event === 'result') {
+        if (message.data?.engine === 'gemini') actualEngine = 'gemini';
         const investigationRef = rememberInvestigation(scenarioKey, message.data);
         message.data = { ...message.data, investigationRef };
       }
       res.write(`event: ${message.event}\ndata: ${JSON.stringify(message.data)}\n\n`);
     }
+    const outcome = abort.signal.aborted || res.destroyed ? 'aborted' : 'completed';
     logEvent('info', 'investigate.end', {
       requestId,
       durationMs: Math.round(Date.now() - startedAt),
-      outcome: abort.signal.aborted || res.destroyed ? 'aborted' : 'completed',
+      outcome,
+      engine: actualEngine,
     });
+    incrementMetric('cineops_investigations_completed_total', { engine: actualEngine, outcome });
   } catch (error) {
     logEvent('error', 'investigate.error', { requestId, message: error.message });
+    incrementMetric('cineops_investigations_failed_total');
     if (!abort.signal.aborted && !res.destroyed) {
       res.write(`event: error\ndata: ${JSON.stringify({ message: error.message })}\n\n`);
     }
@@ -166,6 +176,7 @@ export function startServer({ port = Number(process.env.PORT) || 8000, host = pr
     if (decision.allowed) return false;
     const retryAfterSec = Math.max(1, Math.ceil(decision.retryAfterMs / 1000));
     logEvent('warn', 'ratelimit.block', { bucket, retryAfterSec });
+    incrementMetric('cineops_ratelimit_blocks_total', { bucket });
     const body = JSON.stringify({ error: `rate limit exceeded — retry in ${retryAfterSec}s` });
     res.writeHead(429, { 'content-type': 'application/json; charset=utf-8', 'retry-after': String(retryAfterSec), 'content-length': Buffer.byteLength(body) });
     res.end(body);
@@ -174,6 +185,13 @@ export function startServer({ port = Number(process.env.PORT) || 8000, host = pr
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     try {
+      if (req.method === 'GET' && url.pathname === '/metrics') {
+        // Self-monitoring: the same Grafana that shows the incident watches
+        // the agent service itself.
+        res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4; charset=utf-8' });
+        res.end(formatServiceMetrics());
+        return;
+      }
       if (req.method === 'GET' && url.pathname === '/api/health') {
         sendJson(res, 200, {
           ok: true,
@@ -227,9 +245,11 @@ export function startServer({ port = Number(process.env.PORT) || 8000, host = pr
             history: payload.history,
           });
           logEvent('info', 'followup.answer', { scenarioId: stored.scenarioId, supported: answer.supported, citations: answer.citations.length });
+          incrementMetric('cineops_followups_total', { supported: answer.supported ? 'yes' : 'no' });
           sendJson(res, 200, answer);
         } catch (error) {
           logEvent('error', 'followup.error', { message: error.message });
+          incrementMetric('cineops_followups_failed_total');
           sendJson(res, error.statusCode ?? 502, { error: `follow-up failed: ${error.message}` });
         }
         return;
@@ -275,6 +295,7 @@ export function startServer({ port = Number(process.env.PORT) || 8000, host = pr
         try {
           const outcome = await callSimulator('/recover', { method: 'POST' });
           logEvent('info', 'recovery.approved', { investigationRef: payload.investigationRef, phase: outcome.phase });
+          incrementMetric('cineops_recoveries_total', { phase: outcome.phase ?? 'unknown' });
           sendJson(res, 200, { acknowledged: true, ...outcome });
         } catch (error) {
           logEvent('error', 'recovery.error', { investigationRef: payload.investigationRef, message: error.message });
