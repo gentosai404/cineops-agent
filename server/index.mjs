@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -7,11 +8,28 @@ import { scenarios } from '../src/scenarios.mjs';
 import { investigateStream } from './agent.mjs';
 import { geminiAvailable } from './gemini.mjs';
 import { createMcpClient, mcpAvailable } from './grafana-mcp.mjs';
+import { answerFollowUp } from './followup.mjs';
 import { resolveStatic } from './static.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = resolve(ROOT, 'dist');
 const MAX_BODY_BYTES = 10_000;
+
+// Follow-ups never trust a client-supplied context: each streamed
+// investigation result is stored here under an unguessable reference, and the
+// client answers with that reference. In-memory per process — documented
+// limitation for single-instance Cloud Run deployments.
+const investigations = new Map();
+const MAX_STORED_INVESTIGATIONS = 50;
+
+function rememberInvestigation(scenarioId, result) {
+  const ref = randomUUID();
+  investigations.set(ref, { scenarioId, result });
+  if (investigations.size > MAX_STORED_INVESTIGATIONS) {
+    investigations.delete(investigations.keys().next().value);
+  }
+  return ref;
+}
 
 async function readJsonBody(req) {
   const chunks = [];
@@ -75,6 +93,10 @@ async function handleInvestigate(req, res) {
   try {
     for await (const message of investigateStream(scenario, query, { signal: abort.signal, mcp })) {
       if (abort.signal.aborted || res.destroyed) break;
+      if (message.event === 'result') {
+        const investigationRef = rememberInvestigation(scenario.id, message.data);
+        message.data = { ...message.data, investigationRef };
+      }
       res.write(`event: ${message.event}\ndata: ${JSON.stringify(message.data)}\n\n`);
     }
   } catch (error) {
@@ -100,6 +122,45 @@ export function startServer({ port = Number(process.env.PORT) || 8000, host = pr
       }
       if (req.method === 'POST' && url.pathname === '/api/investigate') {
         await handleInvestigate(req, res);
+        return;
+      }
+      if (req.method === 'POST' && url.pathname === '/api/followup') {
+        let payload;
+        try {
+          payload = await readJsonBody(req);
+        } catch {
+          sendJson(res, 400, { error: 'invalid JSON body' });
+          return;
+        }
+        if (typeof payload?.question !== 'string' || !payload.question.trim()) {
+          sendJson(res, 400, { error: 'question is required' });
+          return;
+        }
+        if (!geminiAvailable()) {
+          sendJson(res, 503, { error: 'follow-up Q&A requires the live engine (set GEMINI_API_KEY)' });
+          return;
+        }
+        const investigationRef = payload?.investigationRef;
+        if (typeof investigationRef !== 'string' || !investigationRef) {
+          sendJson(res, 400, { error: 'investigationRef is required' });
+          return;
+        }
+        const stored = investigations.get(investigationRef);
+        if (!stored) {
+          sendJson(res, 404, { error: 'unknown investigation' });
+          return;
+        }
+        try {
+          const answer = await answerFollowUp({
+            question: payload.question,
+            scenarioId: stored.scenarioId,
+            context: stored.result,
+            history: payload.history,
+          });
+          sendJson(res, 200, answer);
+        } catch (error) {
+          sendJson(res, error.statusCode ?? 502, { error: `follow-up failed: ${error.message}` });
+        }
         return;
       }
       if (req.method === 'GET') {

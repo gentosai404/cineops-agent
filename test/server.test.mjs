@@ -76,6 +76,7 @@ test('server: investigate streams tool calls, observations, and a result', async
     assert.equal(result.status, 'root_cause_identified');
     assert.equal(result.rootCause.stage, 'transcode');
     assert.equal(result.query, 'Can we still make the 21:00 premiere?');
+    assert.match(result.investigationRef ?? '', /^[0-9a-f-]{36}$/, 'results carry a follow-up reference');
 
     const statuses = events.filter((item) => item.event === 'status');
     assert.deepEqual(statuses.map((item) => item.data.phase), ['planning', 'concluding']);
@@ -119,6 +120,34 @@ test('server: investigate rejects unknown scenarios and malformed bodies', async
     const method = await fetch(`http://127.0.0.1:${port}/api/health`, { method: 'DELETE' });
     assert.equal(method.status, 405);
   } finally {
+    await new Promise((done) => server.close(done));
+  }
+});
+
+test('server: followup validates input and requires the live engine', async () => {
+  const { server, port } = await startServer({ port: 0 });
+  const base = `http://127.0.0.1:${port}`;
+  // Force the no-key condition so the assertion is deterministic even on a
+  // machine that has GEMINI_API_KEY exported.
+  const hadKey = process.env.GEMINI_API_KEY;
+  delete process.env.GEMINI_API_KEY;
+  try {
+    const emptyQuestion = await fetch(`${base}/api/followup`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ question: '   ', scenarioId: 'premiere-night' }),
+    });
+    assert.equal(emptyQuestion.status, 400);
+
+    const noEngine = await fetch(`${base}/api/followup`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ question: 'Why did transcode fail?', scenarioId: 'premiere-night', context: {} }),
+    });
+    assert.equal(noEngine.status, 503);
+    assert.match((await noEngine.json()).error, /live engine/);
+  } finally {
+    if (hadKey !== undefined) process.env.GEMINI_API_KEY = hadKey;
     await new Promise((done) => server.close(done));
   }
 });

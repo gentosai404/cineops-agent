@@ -7,6 +7,9 @@ const escapeHtml = (value) => String(value).replace(/[&<>'"]/g, (character) => (
 
 let liveMode = false;
 let liveEngine = 'deterministic';
+let lastResult = null;
+let followupGeneration = 0;
+const followupHistory = [];
 
 function setModeIndicator(text) {
   $('#system-state').innerHTML = `<i></i> ${escapeHtml(text ?? (liveMode ? 'LIVE SERVICE' : 'LOCAL REPLAY'))}`;
@@ -75,6 +78,11 @@ function renderEvidence(result) {
 }
 
 function renderResult(result, { skipEvidence = false } = {}) {
+  lastResult = result;
+  followupGeneration += 1;
+  followupHistory.length = 0;
+  $('#followup-thread').innerHTML = '';
+  $('#followup').hidden = !liveMode;
   $('#result-status').textContent = result.status === 'root_cause_identified' ? 'ROOT CAUSE IDENTIFIED' : 'MONITORING';
   $('#confidence').textContent = `${Math.round(result.confidence * 100)}% confidence`;
   $('#root-cause').textContent = result.rootCause.finding;
@@ -249,6 +257,60 @@ async function runInvestigation(event) {
   }
 }
 
+const evidenceById = () => new Map((lastResult?.evidence ?? []).map((item) => [item.id, item]));
+
+function appendFollowUp(role, text, citations = [], supported = true) {
+  const item = document.createElement('li');
+  item.dataset.role = role;
+  const chips = role === 'cineops' && citations.length
+    ? `<span class="followup-citations">${citations.map((id) => {
+        const evidence = evidenceById().get(id);
+        return `<em title="${escapeHtml(evidence?.query ?? id)}">${escapeHtml(evidence?.label ?? id)}</em>`;
+      }).join('')}</span>`
+    : '';
+  const unsupportedNote = role === 'cineops' && !supported ? '<span class="followup-unsupported">NOT SUPPORTED BY THE EVIDENCE</span>' : '';
+  item.innerHTML = `<p>${escapeHtml(text)}</p>${chips}${unsupportedNote}`;
+  $('#followup-thread').appendChild(item);
+}
+
+async function runFollowUp(event) {
+  event.preventDefault();
+  const input = $('#followup-input');
+  const question = input.value.trim();
+  if (!question || !lastResult) return;
+  const generation = followupGeneration;
+  const investigationRef = lastResult.investigationRef;
+  appendFollowUp('operator', question);
+  input.value = '';
+  addTrace('followup', question);
+
+  const button = $('#followup-button');
+  button.disabled = true;
+  if (!investigationRef) {
+    appendFollowUp('error', 'No referenced investigation — run an investigation first.');
+    button.disabled = false;
+    return;
+  }
+  try {
+    const response = await fetch('/api/followup', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ question, investigationRef, history: followupHistory.slice(-12) }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload?.error ?? `service unavailable (${response.status})`);
+    // A new investigation may have started while the answer was in flight.
+    if (generation !== followupGeneration) return;
+    appendFollowUp('cineops', payload.answer, payload.citations, payload.supported);
+    followupHistory.push({ role: 'operator', text: question }, { role: 'cineops', text: payload.answer });
+  } catch (error) {
+    if (generation === followupGeneration) appendFollowUp('error', error.message);
+  } finally {
+    button.disabled = false;
+    input.focus();
+  }
+}
+
 function startCountdown() {
   // Synthetic replay clock: starts from the scenario's window on each load by design.
   let seconds = scenario.replayWindowSec;
@@ -268,6 +330,7 @@ renderPipeline();
 setModeIndicator();
 startCountdown();
 $('#investigation-form').addEventListener('submit', runInvestigation);
+$('#followup-form').addEventListener('submit', runFollowUp);
 if (new URLSearchParams(window.location.search).has('autorun')) {
   $('#investigation-form').requestSubmit();
 }
