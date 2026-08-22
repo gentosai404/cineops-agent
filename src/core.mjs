@@ -1,4 +1,5 @@
 const VALID_STAGE_STATUSES = new Set(['healthy', 'degraded', 'failed', 'waiting']);
+const EVIDENCE_SCORE_THRESHOLD = 50;
 
 function requireText(value, name) {
   if (typeof value !== 'string' || !value.trim()) {
@@ -74,7 +75,10 @@ export function investigateIncident(incident, query = 'What is blocking this pro
   validateIncident(incident);
   requireText(query, 'operator query');
 
-  const evidence = [...incident.signals].sort((a, b) => b.score - a.score).slice(0, 3);
+  const ranked = [...incident.signals].sort((a, b) => b.score - a.score);
+  const evidence = ranked
+    .filter((signal) => signal.score >= EVIDENCE_SCORE_THRESHOLD)
+    .slice(0, 3);
   const failedStage = incident.stages.find((stage) => stage.status === 'failed');
   
   const MAX_EVIDENCE_SCORE = 100;
@@ -94,8 +98,8 @@ export function investigateIncident(incident, query = 'What is blocking this pro
   return {
     incidentId: incident.id,
     query,
-    status: failedStage ? 'root_cause_identified' : 'monitoring',
-    severity: failedStage ? 'critical' : 'warning',
+    status: failedStage && evidence.length ? 'root_cause_identified' : 'monitoring',
+    severity: failedStage && evidence.length ? 'critical' : 'warning',
     confidence,
     rootCause: {
       stage: targetStage,

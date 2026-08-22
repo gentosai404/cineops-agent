@@ -33,6 +33,7 @@ function renderEvidence(result) {
 }
 
 function renderResult(result) {
+  $('#result-status').textContent = result.status === 'root_cause_identified' ? 'ROOT CAUSE IDENTIFIED' : 'MONITORING';
   $('#confidence').textContent = `${Math.round(result.confidence * 100)}% confidence`;
   $('#root-cause').textContent = result.rootCause.finding;
   $('#decision').textContent = result.decision;
@@ -81,16 +82,9 @@ async function runInvestigation(event) {
   }
 }
 
-function parseTime(timeStr) {
-  const [hh, mm] = timeStr.split(' ')[0].split(':').map(Number);
-  return (hh * 3600 + mm * 60);
-}
-
 function startCountdown() {
-  const replaySec = parseTime(scenario.replayAt);
-  const deadlineSec = parseTime(scenario.deadline);
-  let seconds = deadlineSec - replaySec;
-  if (seconds < 0) seconds += 24 * 3600;
+  // Synthetic replay clock: starts from the scenario's window on each load by design.
+  let seconds = scenario.replayWindowSec;
   const interval = window.setInterval(() => {
     seconds = Math.max(0, seconds - 1);
     const hours = String(Math.floor(seconds / 3600)).padStart(2, '0');

@@ -35,7 +35,7 @@
         <p>CineOps correlates production signals through Grafana MCP, then turns failure evidence into a recovery decision.</p>
         <dl>
           <div><dt>Premiere</dt><dd>21:00 UTC</dd></div>
-          <div><dt>Replay remaining</dt><dd id="countdown">00:36:00</dd></div>
+          <div><dt>Replay clock</dt><dd id="countdown" title="Synthetic replay clock — resets on each page load">00:36:00</dd></div>
           <div><dt>Mode</dt><dd>Local replay</dd></div>
         </dl>
       </div>
@@ -72,7 +72,7 @@
         </div>
 
         <article id="agent-result" class="agent-result" hidden aria-live="polite">
-          <div class="result-kicker"><span>ROOT CAUSE IDENTIFIED</span><strong id="confidence"></strong></div>
+          <div class="result-kicker"><span id="result-status">ROOT CAUSE IDENTIFIED</span><strong id="confidence"></strong></div>
           <h3 id="root-cause"></h3>
           <p id="decision"></p>
           <ol id="actions" class="actions"></ol>
