@@ -36,6 +36,42 @@ function finalVerdict(overrides = {}) {
   }]);
 }
 
+test('gemini loop: model thinking alongside tool calls streams as thought events', async () => {
+  const turns = [
+    modelReply([
+      { text: 'The pipeline summary shows transcode failed. I will pull its Prometheus metrics first.' },
+      { functionCall: { name: 'query_prometheus', args: { stage: 'transcode' } } },
+    ]),
+    finalVerdict(),
+  ];
+  const events = await collect(geminiInvestigation({ scenario, query: 'q', callModel: async () => turns.shift() }));
+
+  const thought = events.find((item) => item.event === 'thought');
+  assert.ok(thought, 'expected a thought event');
+  assert.match(thought.data.text, /transcode failed/);
+  const thoughtIndex = events.findIndex((item) => item.event === 'thought');
+  const toolIndex = events.findIndex((item) => item.event === 'tool_call');
+  assert.ok(thoughtIndex < toolIndex, 'thinking precedes the tool call it explains');
+});
+
+test('gemini loop: thoughts are sanitized — no code dumps, capped length', async () => {
+  const turns = [
+    modelReply([
+      { text: 'Querying now. ```json\n{"result":[{"metric":{"__name__":"secret"},"value":[1,"999"]}]}\n``` see metrics' },
+      { functionCall: { name: 'query_prometheus', args: {} } },
+    ]),
+    finalVerdict(),
+  ];
+  const events = await collect(geminiInvestigation({ scenario, query: 'q', callModel: async () => turns.shift() }));
+  const thought = events.find((item) => item.event === 'thought');
+
+  assert.ok(thought);
+  assert.ok(!thought.data.text.includes('```'), 'fenced tool payloads must not leak into the trace');
+  assert.ok(!thought.data.text.includes('"__name__"'));
+  assert.ok(thought.data.text.length <= 300);
+  assert.match(thought.data.text, /Querying now/i);
+});
+
 test('gemini loop: tool calls are executed and the verdict streams through the event contract', async () => {
   const turns = [
     modelReply([{ functionCall: { name: 'query_prometheus', args: { stage: 'transcode' } } }]),
